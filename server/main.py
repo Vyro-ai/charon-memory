@@ -31,7 +31,7 @@ MEMGRAPH_USERNAME = os.environ.get("MEMGRAPH_USERNAME")
 MEMGRAPH_PASSWORD = os.environ.get("MEMGRAPH_PASSWORD")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH")
+HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "history.db")
 
 DEFAULT_CONFIG = {
     "version": "v1.1",
