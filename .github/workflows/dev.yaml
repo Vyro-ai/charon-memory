@@ -45,8 +45,6 @@ jobs:
           push: true
           tags: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            "GITHUB_TOKEN=${{ secrets.GIT_PRIVATE_PACKAGE_SECRET }}"
   trvy-scan:
     needs: build
     name: Trivy Scan
