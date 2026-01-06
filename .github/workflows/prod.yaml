@@ -3,11 +3,11 @@ name: Github Workflow Charon Mem0
 on:
   push:
     branches:
-      - "dev"
+      - "main"
 
 env:
   ARTIFACT_REGISTRY: registry.digitalocean.com/vag
-  IMAGE_NAME: charon-mem0-dev
+  IMAGE_NAME: charon-mem0
 
 jobs:
   build:
