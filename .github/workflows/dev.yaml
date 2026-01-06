@@ -1,73 +1,164 @@
-name: Github Workflow Charon Mem0
+name: Github Workflow Charon Mem0 dev
 
 on:
-  push:
-    branches:
-      - "dev"
+    push:
+        branches:
+            - "dev"
 
 env:
-  ARTIFACT_REGISTRY: registry.digitalocean.com/vag
-  IMAGE_NAME: charon-mem0-dev
+    ARTIFACT_REGISTRY: registry.digitalocean.com/vag
+    IMAGE_NAME: charon-mem0
 
 jobs:
-  build:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v2
+    build:
+        name: Build Docker Image
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout branch
+              uses: actions/checkout@v2
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v1
-        with:
-          images: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}
+            - name: Extract Docker metadata
+              id: meta
+              uses: docker/metadata-action@v1
+              with:
+                  images: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v2
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
+            - name: Install doctl
+              uses: digitalocean/action-doctl@v2
+              with:
+                  token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
 
-      - name: Configure Docker to use the doctl
-        run: doctl registry login
+            - name: Configure Docker to use the doctl
+              run: doctl registry login
 
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v3
-        with:
-          context: ./
-          file: ./server/Dockerfile
-          push: true
-          tags: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          labels: ${{ steps.meta.outputs.labels }}
-  trvy-scan:
-    needs: build
-    name: Trivy Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Imagine Teams Repo
-        uses: actions/checkout@v2
+            - name: Build and Push Docker Image
+              uses: docker/build-push-action@v3
+              with:
+                  context: ./
+                  file: ./server/Dockerfile
+                  push: true
+                  tags: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+                  labels: ${{ steps.meta.outputs.labels }}
+    trvy-scan:
+        needs: build
+        name: Trivy Scan
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Imagine Teams Repo
+              uses: actions/checkout@v2
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
+            - name: Install doctl
+              uses: digitalocean/action-doctl@v2
+              with:
+                  token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
 
-      - name: Configure Docker to use the doctl
-        run: doctl registry login
+            - name: Configure Docker to use the doctl
+              run: doctl registry login
 
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: "table"
-          severity: "CRITICAL,HIGH"
-          ignore-unfixed: true
-        continue-on-error: true 
+            - name: Scan image with Trivy
+              uses: aquasecurity/trivy-action@0.28.0
+              with:
+                  image-ref: ${{ env.ARTIFACT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+                  format: "table"
+                  severity: "CRITICAL,HIGH"
+                  ignore-unfixed: true
+              continue-on-error: true
 
-  
+    update_tag:
+        needs: trvy-scan
+        name: Update Image Tag in Kustomize
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Kustomize Repo
+              uses: actions/checkout@v2
+              with:
+                  repository: Vyro-ai/vag-backend-configs
+                  token: ${{ secrets.GIT_PRIVATE_PACKAGE_SECRET }}
+                  ref: main
+
+            - name: Update Image Tag in Kustomize Overlay
+              run: |
+                  PR_DIR=./dev/mem0/kustomize/overlays/dev  # Ensure this is the correct path
+
+                  # Update the image tag in patch-image.yaml for Kustomize
+                  find "$PR_DIR" -type f -name "patch-image.yaml" -exec sed -i "s|registry.digitalocean.com/vag/charon-mem0-dev:.*|registry.digitalocean.com/vag/charon-mem0-dev:${{ github.sha }}|" {} \;
+
+                  # Update the image tag in kustomization.yaml for the overlay
+                  find "$PR_DIR" -type f -name "kustomization.yaml" -exec sed -i "s|newTag: .*|newTag: ${{ github.sha }}|" {} \;
+
+
+                  # Set Git config to use a bot user for commits
+                  git config --global user.name "github-actions[bot]"
+                  git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+                  # Add the modified files to Git
+                  git add $PR_DIR/patch-image.yaml
+                  git add $PR_DIR/kustomization.yaml
+
+                  # Check if there are any changes to commit
+                  if git diff-index --quiet HEAD --; then
+                    echo "No changes to commit"
+                  else
+                    git commit -m "Update  Charon Mem0 dev image tag to ${{ github.sha }}"
+                    git push origin main
+                  fi
+    deploy:
+        needs: update_tag
+        name: Deploy with Kustomize
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Kustomize Repo
+              uses: actions/checkout@v2
+              with:
+                  repository: Vyro-ai/vag-backend-configs
+                  token: ${{ secrets.GIT_PRIVATE_PACKAGE_SECRET }}
+                  ref: main
+            - name: Validate Kustomize
+              id: kustomize
+              uses: int128/kustomize-action@v1
+              with:
+                  kustomization: ./dev/mem0/kustomize/overlays/dev/kustomization.yaml
+            - name: Report Kustomize Error
+              if: failure()
+              uses: int128/comment-action@v1
+              with:
+                  update-if-exists: replace
+                  post: |
+                      :x: kustomize error
+                      ${{ steps.kustomize.outputs.pretty-errors }}
+            - name: Install doctl
+              uses: digitalocean/action-doctl@v2
+              with:
+                  token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
+            - name: Retrieve and set kubeconfig for DO cluster
+              run: |
+                  doctl kubernetes cluster kubeconfig save anubis-prod --expiry-seconds 600
+
+            - name: Apply Kustomize Configuration
+              run: |
+                  kustomize build ./dev/mem0/kustomize/overlays/dev | kubectl apply -f -
+            - name: Kubernetes Rollout Status for Blue
+              run: kubectl rollout status deployment/charon-mem0-dev -n charon-memory --timeout=300s
+    Notify:
+        needs: deploy
+        name: Notify Deployment
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Charon Mem0 dev
+              uses: actions/checkout@v2
+            - name: Notify Slack
+              uses: rtCamp/action-slack-notify@v2
+              env:
+                  SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+                  SLACK_CHANNEL: anubis-pipeline-status
+                  SLACK_USERNAME: Action pipeline for Charon Mem0 dev
+                  SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
+                  SLACK_MESSAGE: ${{ job.status == 'success' && 'Charon Mem0 dev deployed on anubis Cluster' || 'Charon Mem0 dev **failed** to deploy on Digital Ocean' }}
+
+                  if: always()

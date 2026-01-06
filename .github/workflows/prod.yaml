@@ -70,4 +70,95 @@ jobs:
           ignore-unfixed: true
         continue-on-error: true 
 
-  
+  update_tag:
+        needs: trvy-scan
+        name: Update Image Tag in Kustomize
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Kustomize Repo
+              uses: actions/checkout@v2
+              with:
+                  repository: Vyro-ai/vag-backend-configs
+                  token: ${{ secrets.GIT_PRIVATE_PACKAGE_SECRET }}
+                  ref: main
+
+            - name: Update Image Tag in Kustomize Overlay
+              run: |
+                  PR_DIR=./production/mem0/kustomize/overlays/prod  # Ensure this is the correct path
+
+                  # Update the image tag in patch-image.yaml for Kustomize
+                  find "$PR_DIR" -type f -name "patch-image.yaml" -exec sed -i "s|registry.digitalocean.com/vag/charon-mem0v:.*|registry.digitalocean.com/vag/charon-mem0v:${{ github.sha }}|" {} \;
+
+                  # Update the image tag in kustomization.yaml for the overlay
+                  find "$PR_DIR" -type f -name "kustomization.yaml" -exec sed -i "s|newTag: .*|newTag: ${{ github.sha }}|" {} \;
+
+
+                  # Set Git config to use a bot user for commits
+                  git config --global user.name "github-actions[bot]"
+                  git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+                  # Add the modified files to Git
+                  git add $PR_DIR/patch-image.yaml
+                  git add $PR_DIR/kustomization.yaml
+
+                  # Check if there are any changes to commit
+                  if git diff-index --quiet HEAD --; then
+                    echo "No changes to commit"
+                  else
+                    git commit -m "Update  Charon Mem0 Prod image tag to ${{ github.sha }}"
+                    git push origin main
+                  fi
+  deploy:
+        needs: update_tag
+        name: Deploy with Kustomize
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Kustomize Repo
+              uses: actions/checkout@v2
+              with:
+                  repository: Vyro-ai/vag-backend-configs
+                  token: ${{ secrets.GIT_PRIVATE_PACKAGE_SECRET }}
+                  ref: main
+            - name: Validate Kustomize
+              id: kustomize
+              uses: int128/kustomize-action@v1
+              with:
+                  kustomization: ./production/mem0/kustomize/overlays/prod/kustomization.yaml
+            - name: Report Kustomize Error
+              if: failure()
+              uses: int128/comment-action@v1
+              with:
+                  update-if-exists: replace
+                  post: |
+                      :x: kustomize error
+                      ${{ steps.kustomize.outputs.pretty-errors }}
+            - name: Install doctl
+              uses: digitalocean/action-doctl@v2
+              with:
+                  token: ${{ secrets.DO_ACCESS_TOKEN_V2 }}
+            - name: Retrieve and set kubeconfig for DO cluster
+              run: |
+                  doctl kubernetes cluster kubeconfig save anubis-prod --expiry-seconds 600
+
+            - name: Apply Kustomize Configuration
+              run: |
+                  kustomize build ./production/mem0/kustomize/overlays/prod | kubectl apply -f -
+            - name: Kubernetes Rollout Status for Blue
+              run: kubectl rollout status deployment/charon-mem0 -n charon-memory --timeout=300s
+  Notify:
+        needs: deploy
+        name: Notify Deployment
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Charon Mem0 Prod
+              uses: actions/checkout@v2
+            - name: Notify Slack
+              uses: rtCamp/action-slack-notify@v2
+              env:
+                  SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+                  SLACK_CHANNEL: anubis-pipeline-status
+                  SLACK_USERNAME: Action pipeline for Charon Mem0 Prod
+                  SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
+                  SLACK_MESSAGE: ${{ job.status == 'success' && 'Charon Mem0 Prod deployed on anubis Cluster' || 'Charon Mem0 Prod **failed** to deploy on Digital Ocean' }}
+
+                  if: always()
