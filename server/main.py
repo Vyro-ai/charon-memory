@@ -8,6 +8,16 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from mem0 import Memory
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+from opentelemetry.instrumentation.urllib3 import URLLib3Instrumentor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -58,11 +68,36 @@ DEFAULT_CONFIG = {
 
 MEMORY_INSTANCE = Memory.from_config(DEFAULT_CONFIG)
 
+def configure_tracing():
+    resource = Resource(attributes={
+        SERVICE_NAME: "charon-memory"
+    })
+    trace_provider = TracerProvider(resource=resource)
+    
+    # Defaults to http://localhost:4318/v1/traces
+    otlp_exporter = OTLPSpanExporter()
+    
+    span_processor = BatchSpanProcessor(otlp_exporter)
+    trace_provider.add_span_processor(span_processor)
+    
+    trace.set_tracer_provider(trace_provider)
+
+
+configure_tracing()
+
+
+RequestsInstrumentor().instrument()
+HTTPXClientInstrumentor().instrument()
+PsycopgInstrumentor().instrument()
+URLLib3Instrumentor().instrument()
+
 app = FastAPI(
     title="Mem0 REST APIs",
     description="A REST API for managing and searching memories for your AI Agents and Apps.",
     version="1.0.0",
 )
+
+FastAPIInstrumentor.instrument_app(app)
 
 
 class Message(BaseModel):
