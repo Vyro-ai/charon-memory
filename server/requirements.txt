@@ -6,6 +6,7 @@ python-dotenv==1.0.1
 psycopg[pool]>=3.2.8
 langchain-neo4j>=0.0.3
 rank-bm25
+google-genai
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp
