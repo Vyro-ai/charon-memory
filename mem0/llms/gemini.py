@@ -39,14 +39,14 @@ class GeminiLLM(LLMBase):
             }
 
             # Extract content from the first candidate
-            if response.candidates and response.candidates[0].content.parts:
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
                 for part in response.candidates[0].content.parts:
                     if hasattr(part, "text") and part.text:
                         processed_response["content"] = part.text
                         break
 
             # Extract function calls
-            if response.candidates and response.candidates[0].content.parts:
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
                 for part in response.candidates[0].content.parts:
                     if hasattr(part, "function_call") and part.function_call:
                         fn = part.function_call
@@ -59,7 +59,7 @@ class GeminiLLM(LLMBase):
 
             return processed_response
         else:
-            if response.candidates and response.candidates[0].content.parts:
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
                 for part in response.candidates[0].content.parts:
                     if hasattr(part, "text") and part.text:
                         return part.text
